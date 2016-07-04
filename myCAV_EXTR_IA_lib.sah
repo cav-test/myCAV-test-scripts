@@ -1,7 +1,6 @@
 //myCAV test automation functions library for IA extract testing
 
-//FUNCTION LIST :
-//Extract data sets check functions
+//FUNCTION LIST
 //iaExtractCheckElement($extract_text) - checks if element is presented in IA extract
 //iaExtractCheckMembers($extract_text) - check if number of IA members is presented correctly
 //Service functions
