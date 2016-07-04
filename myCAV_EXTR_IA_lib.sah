@@ -1,0 +1,368 @@
+//myCAV test automation functions library for IA extract testing
+
+//FUNCTION LIST :
+//Extract data sets check functions
+//iaExtractCheckElement($extract_text) - checks if element is presented in IA extract
+//iaExtractCheckMembers($extract_text) - check if number of IA members is presented correctly
+//Service functions
+//cleanINPUT($input) - removes spaces and convert to upper case
+//iaPurchaseExtract($IA_reg_number, $test_url, $test_email) - searches for IA, gets its details and purchases the IA extract
+//iaExtractPrepare($extract_file) - extracts text from IA Extract pdf and prepares it for processing
+//Extract check functions
+//iaExtractCheckNew($reg_number, $IA_members) - check extract for new IA that has been created
+//iaExtractCheckChangeAddress($extract_text, $IA_current_address, $IA_reg_address_date) - check extract for IA that has changed its address
+//iaExtractCheckChangeSecretary1($IA_reg_number, $IA_current_secretary, $IA_secretary_date) - check extract for IA that has changed its secretary
+//iaExtractCheckChangeSecretary2($IA_reg_number, $IA_public_officer_name) - check extract for IA that has changed its secretary who is public officer
+//iaExtractCheckChangeName($IA_reg_number, $IA_new_name, $IA_prev_name, $IA_prev_name_ceased) - check extract for IA that has changed its name
+//iaExtractCheckReinstatement($IA_reg_number) - check extract for IA that has requested reinstatement
+//iaExtractCheckReinstated($IA_reg_number) - check extract for IA that has been reinstated
+//iaExtractCheckPendingCancellation($IA_reg_number) - check extract for IA pending cancellation
+//iaExtractCheckCancellation($IA_reg_number, $IA_dereg_date) - check extract for IA that has cancelled/deregistered
+//iaExtractCheckChangerules($IA_reg_number, $IA_rules_type, $IA_rules_date) - check extract for IA that has changed its rules
+//iaExtractCheckStatementLodged($extract_text) - check extract for IA that has lodged its annual statement
+// Suppression check functions
+//iaExtractCheckSuppressionIsOn($extract_text, $m, $IA_prev_secretary_name, $IA_public_officer_name) - check IA extract that contains some suppressed information
+//iaExtractCheckSuppressionIsOff($extract_text, $m, $IA_prev_secretary_name, $IA_public_officer_name) - check IA extract that contains some suppressed information revoked
+//iaExtractCheckPartySuppressed($extract_text, $party_name) - check IA extract that contains party suppressed
+//iaExtractCheckOrgSuppressionIsOn($extract_text, $m1, $m2) - check extract of suppressed IA
+//iaExtractCheckOrgSuppressionIsOff($extract_text, $m1, $m2) - check extract of IA which suppresion has been revoked
+
+_include ("myCAV_general_lib.sah");
+
+function iaExtractCheckElement($extract_text, $element_string) {
+  $element_string = cleanINPUT($element_string);
+  _assert($extract_text.indexOf($element_string)!=-1);
+}
+
+function iaExtractCheckMembers($extract_text, $IA_members) {
+  switch ($IA_members) {
+    case "0" :
+ 		_assert($extract_text.indexOf("NUMBEROFMEMBERS:0")!=-1); //must display 0 if number of members is 0 in CRM (input parameter)
+      	break;
+    case "-" :
+  		_assert($extract_text.indexOf("NUMBEROFMEMBERS:5ORMORE")!=-1); //must display "5 or more" if number of members is null in CRM (input parameter)
+      	break;
+    case null :
+        _assert($extract_text.indexOf("NUMBEROFMEMBERS:5ORMORE")!=-1); //must display "5 or more" if number of members is null in CRM (input parameter)
+    default :     
+  		_assert($extract_text.indexOf("NUMBEROFMEMBERS:"+$IA_members)!=-1); //must display number equals number of members in CRM (input parameter)  
+  }
+}
+
+function iaPurchaseExtract($IA_reg_number, $test_url, $test_email) {
+//    var $test_url = "https://cms-uat2.cavweb.net/clubs-and-not-for-profits/incorporated-associations/search-for-an-incorporated-association";    
+    _navigateTo($test_url);
+    _click(_label("page_content_0_middlecolumn_locked_0_lblSearch")); // clicks the search field
+    _setValue(_textbox("page_content_0$middlecolumn_locked_0$txtSearch"), $IA_reg_number); //enters IA reg number into search field
+    _click(_submit("Search[1]")); // clicks the Search button
+    _click(_link(0, _in(_cell("/.*"+$IA_reg_number+"/")))); // clicks link within table cell
+    _click(_submit("Purchase extract"));
+    _setValue(_textbox("page_content_0$middlecolumn_locked_0$txtPurchaserFirstName"), "John");
+    _setValue(_textbox("page_content_0$middlecolumn_locked_0$txtPurchaserSurname"), "Snow");
+    _setValue(_textbox("page_content_0$middlecolumn_locked_0$ucPurchaserEmail$txtEmail"), $test_email);
+    _setValue(_textbox("page_content_0$middlecolumn_locked_0$txtConfirmEmail"), $test_email);
+    _click(_submit("Next"));
+    _setValue(_textbox("nm_card_holder"), "John Snow");
+    _setValue(_textbox("no_credit_card"), "4444333322221111");
+    _setSelected(_select("dt_expiry_year"), "2022");
+    _setValue(_textbox("no_cvn"), "111");
+    _click(_link("Next"));
+    _click(_link("Make Payment"));
+    // If duplicate payment then click again
+  try {
+	if (_assertExists(_heading1("Duplicate Payment", _in(_div("mainContent"))))) {
+      	_click(_link("Make Payment"));
+	}
+  } catch (e) {
+     	_log("Not a duplicate payment", "CUSTOM6");
+     }
+    _click(_heading1("Purchase extract"));
+    _click(_heading3("Success!"));
+}
+
+function moveExtractFile ($IA_reg_number) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $pdf = "/IA_Extracts/"+$extract_file;
+  _renameFile($pdf, "/IA_Extracts_Processed/"+$extract_file);
+}
+
+function iaExtractPrepare ($extract_file) { 
+  // Loads pdf file, extracts text and displays as html on web page
+  var $pdf = "/IA_Extracts/"+$extract_file;
+  var $file_exists = _fileExists($pdf);
+  var $counter = 0;
+  _log("$file_exists = "+$file_exists, "CUSTOM4");
+  _log("Waiting for the file "+$extract_file+" in IA_Extracts folder. Holding on.", "CUSTOM4");
+  // Waiting for 5 minutes for the file in the work folder
+  _wait(300000, _fileExists($pdf));
+        if (_fileExists($pdf)==false) {   
+           _log("Wait timeout exceded. Script stoped.", "CUSTOM4");
+           _stop();
+        } 
+  _log("File "+$extract_file+" is in IA_Extracts folder. Proceeding.", "CUSTOM4");
+  showPDFText($pdf);
+  // Extracts text from pdf file
+  var $text_original = getPDFText($pdf);
+  //_log("Original text = " + $text_original, "CUSTOM1");
+  // Removes all spaces from text extracted from pdf file
+  var $text_processed = $text_original.replace(/\s+/g,''); //removes spaces from text using RegExp
+  //_log("Processed text (no spaces) = " + $text_processed, "CUSTOM2");
+  // Removes rabish from text extracted from pdf file
+  var $string_to_remove = $text_processed.match(/Generatedon.*1of1/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*1of2/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*1of3/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*1of4/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*2of2/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*2of3/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*2of4/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*2of5/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*3of3/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*3of4/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*4of4/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*4of5/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  $string_to_remove = $text_processed.match(/Generatedon.*5of5/g); //finds unneeded string
+  $text_processed = $text_processed.replace($string_to_remove,''); //removes unneeded string
+  // To upper case
+  $text_processed = $text_processed.toUpperCase();
+  //_log("Final text = " + $text_processed, "CUSTOM4");
+  //_renameFile("/IA_Extracts/"+ $extract_file, "/IA_Extracts_Processed/"+ $extract_file); //moves extract file to another folder
+  return $text_processed;
+}
+
+function iaExtractCheckNew($IA_reg_number, $IA_members) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  _assert($extract_text.indexOf("STATUS:REGISTERED")!=-1); //status=Registered
+  _assert($extract_text.indexOf("DATEDEREGISTERED:NOTAPPLICABLE")!=-1); //date deregistered must be blank
+  _assert($extract_text.indexOf("NOPREVIOUSINCORPORATEDASSOCIATIONNAMES")!=-1); //no previous change of IA name
+  _assert($extract_text.indexOf("DATEOFLASTAGM:DATEOFSPECIALRESOLUTION")!=-1); //date of last AGM must be blank
+  _assert($extract_text.indexOf("TIER:ONGOINGFINANCIALYEAR")!=-1); //tier must be blank (defect logged in JIRA - it is not blank currently)
+  _assert($extract_text.indexOf("LASTANNUALSTATEMENTLODGED:CURRENTREGISTEREDADDRESS")!=-1); //last statement lodged must be blank
+  _assert($extract_text.indexOf("WHERELASTRULECHANGEOCCURRED:NOTAPPLICABLE")!=-1); // date of special resolution must be blank  
+  _assert($extract_text.indexOf("PREVIOUSREGISTEREDADDRESSESCURRENTSECRETARY")!=-1); //must be no data on previous addresses
+  _assert($extract_text.indexOf("PREVIOUSSECRETARIESPREVIOUSPUBLICOFFICERS")!=-1); //must be no data on previous secretaries
+  _assert($extract_text.indexOf("NOPREVIOUSPUBLICOFFICERS")!=-1); //must be no data on previous public officers
+	iaExtractCheckMembers($extract_text, $IA_members); //number of members is correct
+}
+
+function iaExtractCheckChangeAddress($IA_reg_number, $IA_current_address, $IA_reg_address_date) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $IA_current_address = cleanINPUT($IA_current_address);
+  $IA_reg_address_date = cleanINPUT($IA_reg_address_date);
+  var $rx = "REGISTEREDADDRESS:"+$IA_current_address;
+  _assert($extract_text.indexOf($rx)!=-1); //current registered address must be presented
+  $rx = "REGISTEREDADDRESS:"+$IA_current_address+"DATECOMMENCED:"+$IA_reg_address_date;
+  _assert($extract_text.indexOf($rx)!=-1); //date of address must be presented
+  _assert($extract_text.indexOf("PREVIOUSREGISTEREDADDRESSESREGISTEREDADDRESS:")!=-1); //previous addresses must be presented
+}
+
+function iaExtractCheckChangeSecretary1($IA_reg_number, $IA_current_secretary, $IA_secretary_date) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $IA_current_secretary = cleanINPUT($IA_current_secretary);
+  $IA_secretary_date = cleanINPUT($IA_secretary_date);
+  var $rx = "CURRENTSECRETARYNAME:"+$IA_current_secretary;
+  _assert($extract_text.indexOf($rx)!=-1); //current secretary name must be presented
+  $rx = "CURRENTSECRETARYNAME:"+$IA_current_secretary+"DATECOMMENCED:"+$IA_secretary_date;
+  _assert($extract_text.indexOf($rx)!=-1); //date of secretary commenced muts be presented
+}
+
+function iaExtractCheckChangeSecretary2($IA_reg_number, $IA_public_officer_name) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $IA_public_officer_name = cleanINPUT($IA_public_officer_name);
+  var $prev_secretaries_section_data = $extract_text.match("PREVIOUSSECRETARIES(.*)PREVIOUSPUBLICOFFICERS"); //extracts data between two sections
+  //_log("prev_secretaries_section_data = " + $prev_secretaries_section_data[1], "CUSTOM4");
+  var $prev_publicoficers_section_data = $extract_text.match("PREVIOUSPUBLICOFFICERS(.*)PREVIOUSINCORPORATEDASSOCIATIONNAMES"); //extracts data between two sections
+  _assert($prev_secretaries_section_data[1].indexOf($IA_public_officer_name)!=-1); // name of previous secretary must be in previous secretaries list
+  _assert($prev_publicoficers_section_data[1].indexOf($IA_public_officer_name)!=-1); // name of previous secretary must be in previous secretaries list
+}
+
+function iaExtractCheckChangeName($IA_reg_number, $IA_new_name, $IA_prev_name, $IA_prev_name_ceased) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $IA_new_name = cleanINPUT($IA_new_name);
+  $IA_prev_name = cleanINPUT($IA_prev_name);
+  $IA_prev_name_ceased = cleanINPUT($IA_prev_name_ceased);
+  var $rx = "ASSOCIATIONEXTRACTFOR"+$IA_new_name;
+  _assert($extract_text.indexOf($rx)!=-1); //name changed is presented
+  var $prev_names_section_data = $extract_text.match("PREVIOUSINCORPORATEDASSOCIATIONNAMES(.*)"); //extracts data after last section
+  _assert($prev_names_section_data[1].indexOf($IA_prev_name)!=-1); // previous name of IA must be in this section
+  _assert($prev_names_section_data[1].indexOf($IA_prev_name_ceased)!=-1); // previous name ceased date of IA must be in this section
+}
+
+function iaExtractCheckReinstatement($IA_reg_number) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  iaExtractCheckElement($extract_text,"STaTUS: PENDINGRE -INsTATEMENT ");
+}
+
+function iaExtractCheckReinstated($IA_reg_number) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  _assert($extract_text.indexOf("STATUS:REGISTERED")!=-1); //status=Registered
+}
+
+function iaExtractCheckPendingCancellation($IA_reg_number) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  iaExtractCheckElement($extract_text, "Status:Pending Cancellation"); //status=Pending cancellation
+}
+
+function iaExtractCheckCancellation($IA_reg_number, $IA_dereg_date) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  iaExtractCheckElement($extract_text, "Status:Deregistered"); //status=De-Registered
+  var $rx = "Date deregistered:"+$IA_dereg_date;
+  iaExtractCheckElement($extract_text, $rx); //date of deregistration is presented
+}
+
+function iaExtractCheckChangeRules($IA_reg_number, $IA_rules_type, $IA_rules_date) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $IA_rules_type = cleanINPUT($IA_rules_type);
+  $IA_rules_date = cleanINPUT($IA_rules_date);
+  var $rx = "RULETYPE:"+$IA_rules_type;
+  _assert($extract_text.indexOf($rx)!=-1); //type of rules is presented
+  $rx = "RULECHANGEOCCURRED:"+$IA_rules_date;
+  _assert($extract_text.indexOf($rx)!=-1); //change of rules date is presented
+}
+
+function iaExtractCheckStatementLodged($IA_reg_number, $IA_last_agm_date, $IA_last_statement_date, $IA_ong_fy_date, $IA_members, $IA_tier) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $IA_members = cleanINPUT($IA_members);
+  $IA_tier = cleanINPUT($IA_tier);
+  $IA_ong_fy_date = cleanINPUT($IA_ong_fy_date);
+  $IA_last_statement_date = cleanINPUT($IA_last_statement_date);
+  $IA_last_agm_date = cleanINPUT($IA_last_agm_date);
+  iaExtractCheckMembers($extract_text, $IA_members);
+  $rx = "TIER:"+$IA_tier;
+  iaExtractCheckElement($extract_text, $rx); //tier is presented
+  $rx = "ONGOINGFINANCIALYEARDATE:"+$IA_ong_fy_date;
+  iaExtractCheckElement($extract_text, $rx); //ongoing FY date is presented
+  $rx = "LASTANNUALSTATEMENTLODGED:"+$IA_last_statement_date;
+  iaExtractCheckElement($extract_text, $rx); //annual statement date is presented
+  $rx = "DATEOFLASTAGM:"+$IA_last_agm_date;
+  iaExtractCheckElement($extract_text, $rx); //last AGM date is presented
+}
+
+function iaExtractCheckSuppressionIsOn($IA_reg_number, $IA_prev_secretary_name, $IA_public_officer_name,  $m) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  switch ($m) {
+    case "1" :
+        //current secretary info suppressed #1
+        _assert($extract_text.indexOf("CURRENTSECRETARYNOTAVAILABLE")!=-1); //info on current secretary must be hidden
+    break;
+    case "2" :
+        //previous secretary info suppressed #2
+        var $prev_secretaries_section_data = $extract_text.match("PREVIOUSSECRETARIES(.*)PREVIOUSPUBLICOFFICERS"); //extracts data between two sections
+        $IA_prev_secretary_name = cleanINPUT($IA_prev_secretary_name);
+        _assert($prev_secretaries_section_data[1].indexOf($IA_prev_secretary_name)<0); // info on prev secretary must not be visible in this section
+    break;
+    case "3" :
+        //previous public officer info suppressed #3
+        var $prev_publicoficers_section_data = $extract_text.match("PREVIOUSPUBLICOFFICERS(.*)PREVIOUSINCORPORATEDASSOCIATIONNAMES"); //extracts data between two sections
+        $IA_public_officer_name = cleanINPUT($IA_public_officer_name);
+        _assert($prev_publicoficers_section_data[1].indexOf($IA_public_officer_name)<0); // name of previous secretary must not be in public officers list
+    break;
+  }
+}
+
+function iaExtractCheckSuppressionIsOff($IA_reg_number, $IA_prev_secretary_name, $IA_public_officer_name,  $m) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  switch ($m) {
+    case "1" :
+        //current secretary info suppressed #1
+        _assert($extract_text.indexOf("CURRENTSECRETARYNOTAVAILABLE")<0); //info on current secretary must NOT be hidden
+    break;
+    case "2" :
+        //previous secretary info suppressed #2
+        var $prev_secretaries_section_data = $extract_text.match("PREVIOUSSECRETARIES(.*)PREVIOUSPUBLICOFFICERS"); //extracts data between two sections
+        $IA_prev_secretary_name = cleanINPUT($IA_prev_secretary_name);
+        _assert($prev_secretaries_section_data[1].indexOf($IA_prev_secretary_name)!=-1); // info on prev secretary must be visible in this section
+    break;
+    case "3" :
+        //previous public officer info suppressed #3
+        var $prev_publicoficers_section_data = $extract_text.match("PREVIOUSPUBLICOFFICERS(.*)PREVIOUSINCORPORATEDASSOCIATIONNAMES"); //extracts data between two sections
+        $IA_public_officer_name = cleanINPUT($IA_public_officer_name);
+        _assert($prev_publicoficers_section_data[1].indexOf($IA_public_officer_name)!=-1); // name of previous secretary must be in public officers list
+    break;
+  }
+}
+
+function iaExtractCheckPartySuppressed($IA_reg_number, $party_name) {
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  $party_name = cleanINPUT($party_name);
+  _assert($extract_text.indexOf($party_name)!=-1); // any info on party must be hidden (input parameter)
+}
+
+function iaExtractCheckOrgSuppressionIsOn($IA_reg_number, $m1, $m2) {
+  //m1 = 0 if IA does not have previous secretaries
+  //m2 = 0 if IA does not have previous public officers
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  _assert($extract_text.indexOf("CURRENTREGISTEREDADDRESSNOTAVAILABLE")!=-1); // info on current address must be hidden
+  _assert($extract_text.indexOf("PREVIOUSREGISTEREDADDRESSESNOTAVAILABLE")!=-1); // info on previous addresses must be hidden
+  _assert($extract_text.indexOf("CURRENTSECRETARYNOTAVAILABLE")!=-1); // info on current secretary must be hidden
+  if ($m1 != "0") {
+  	_assert($extract_text.indexOf("PREVIOUSSECRETARIESNOTAVAILABLE")!=-1); // info on previous secretaries must be hidden
+  }
+    else {
+        _assert($extract_text.indexOf("PREVIOUSSECRETARIESPREVIOUSPUBLICOFFICERS")!=-1); // no previous secretaries listed
+    }
+
+  if ($m2 != "0") {
+  	_assert($extract_text.indexOf("PREVIOUSPUBLICOFFICERSNOTAVAILABLE")!=-1); // info on previous public officers must be hidden
+  }
+    else {
+        _assert($extract_text.indexOf("PREVIOUSPUBLICOFFICERSPREVIOUSINCORPORATEDASSOCIATIONNAMES")!=-1); // no previous public officers listed
+    }
+}
+
+function iaExtractCheckOrgSuppressionIsOff($IA_reg_number, $m1, $m2) {
+  //m1 = 0 if IA does not have previous secretaries
+  //m2 = 0 if IA does not have previous public officers
+  var $extract_file = "Extract-"+$IA_reg_number+".pdf";
+  var $extract_text = iaExtractPrepare ($extract_file);
+  _assert($extract_text.indexOf("CURRENTREGISTEREDADDRESSNOTAVAILABLE")<0); // info on current address must be visible
+  _assert($extract_text.indexOf("PREVIOUSREGISTEREDADDRESSESNOTAVAILABLE")<0); // info on previous addresses must be visible
+  _assert($extract_text.indexOf("CURRENTSECRETARYNOTAVAILABLE")<0); // info on current secretary must be visible
+  if ($m1 != "0") {
+  	_assert($extract_text.indexOf("PREVIOUSSECRETARIESNOTAVAILABLE")<0); // info on previous secretaries must be visible
+  }
+    else {
+        _assert($extract_text.indexOf("PREVIOUSSECRETARIESPREVIOUSPUBLICOFFICERS")!=-1); // no previous secretaries listed
+    }
+
+  if ($m2 != "0") {
+  	_assert($extract_text.indexOf("PREVIOUSPUBLICOFFICERSNOTAVAILABLE")<0); // info on previous public officers must be visible
+  }
+    else {
+        _assert($extract_text.indexOf("PREVIOUSPUBLICOFFICERSPREVIOUSINCORPORATEDASSOCIATIONNAMES")!=-1); // no previous public officers listed
+    }
+}
+
+
+
+
+
+
+
+
